@@ -5,5 +5,5 @@ import (
 )
 
 func main() {
-	logger.main()
+	logger.Start()
 }
