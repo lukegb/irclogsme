@@ -4,12 +4,16 @@ import (
 	"flag"
 	irc "github.com/fluffle/goirc/client"
 	"io/ioutil"
+	"labix.org/v2/mgo/bson"
 	"time"
 )
 
 const (
 	VERSION_STRING = "0.1"
 	VERSION_ID     = 1
+
+	MULTIPLEXER_INTERVAL = 1 * time.Second
+	MULTIPLEXER_TIMEOUT  = 60 * time.Second
 )
 
 var (
@@ -25,7 +29,7 @@ func readStringFromFile(filename string) (string, error) {
 	return string(f), nil
 }
 
-func ircClientRoutine(netConf NetworkConfig, messageChan chan LogMessage) {
+func ircClientRoutine(netConf NetworkConfig, messageChan chan LogMessage, cmdChan chan CommandMessage) {
 	// this is a go routine
 	ircCli := irc.SimpleClient(netConf.Nick, netConf.User, "http://irclogs.me")
 	quit := make(chan bool)
@@ -35,7 +39,13 @@ func ircClientRoutine(netConf NetworkConfig, messageChan chan LogMessage) {
 	})
 
 	ircCli.AddHandler("connected", func(conn *irc.Conn, line *irc.Line) {
-		LogInfo("(%s) Connected! Joining channels.", netConf.Name)
+		LogInfo("(%s) Connected!")
+		LogInfo("(%s) Executing connection commands.")
+		for _, cmd := range netConf.AuthCommands {
+			LogDebug("(%s) - executing: %s", netConf.Name, cmd)
+			conn.Raw(cmd)
+		}
+		LogInfo("(%s) Joining channels.", netConf.Name)
 		for channelName, _ := range netConf.Channels {
 			LogDebug("(%s) - joining %s", netConf.Name, channelName)
 			conn.Join(channelName)
@@ -108,13 +118,57 @@ func ircClientRoutine(netConf NetworkConfig, messageChan chan LogMessage) {
 	})
 
 	ircCli.AddHandler("PART", func(conn *irc.Conn, line *irc.Line) {
-		LogDebug("(%s) [%s] <%s> parted %s: %s", netConf.Name, line.Time.String(), line.Src, line.Args[0], line.Args[1])
+		var message string
+		if len(line.Args) > 1 {
+			message = line.Args[1]
+		}
+		LogDebug("(%s) [%s] <%s> parted %s: %s", netConf.Name, line.Time.String(), line.Src, line.Args[0], message)
 		// make a log message!
 		messageChan <- LogMessage{
 			Type:      LMT_PART,
 			NetworkId: netConf.Id,
 			Channel:   line.Args[0],
-			Payload:   line.Args[1],
+			Payload:   message,
+			Time:      line.Time,
+			Nick:      line.Nick,
+			Ident:     line.Ident,
+			Host:      line.Host,
+		}
+	})
+
+	ircCli.AddHandler("KICK", func(conn *irc.Conn, line *irc.Line) {
+		var message string
+		if len(line.Args) > 2 {
+			message = line.Args[2]
+		}
+		channel := line.Args[0]
+		who := line.Args[1]
+		LogDebug("(%s) [%s] <%s> kicked %s from %s: %s", netConf.Name, line.Time.String(), line.Src, who, channel, message)
+		// make a log message!
+		messageChan <- LogMessage{
+			Type:      LMT_PART,
+			NetworkId: netConf.Id,
+			Channel:   channel,
+			Payload:   message,
+			Target:    who,
+			Time:      line.Time,
+			Nick:      line.Nick,
+			Ident:     line.Ident,
+			Host:      line.Host,
+		}
+	})
+
+	ircCli.AddHandler("QUIT", func(conn *irc.Conn, line *irc.Line) {
+		var message string
+		if len(line.Args) > 0 {
+			message = line.Args[0]
+		}
+		LogDebug("(%s) [%s] <%s> quit: %s", netConf.Name, line.Time.String(), line.Src, message)
+		// make a log message!
+		messageChan <- LogMessage{
+			Type:      LMT_QUIT,
+			NetworkId: netConf.Id,
+			Payload:   message,
 			Time:      line.Time,
 			Nick:      line.Nick,
 			Ident:     line.Ident,
@@ -128,10 +182,80 @@ func ircClientRoutine(netConf NetworkConfig, messageChan chan LogMessage) {
 	for {
 		LogInfo("(%s) CONNECTING", netConf.Name)
 		ircCli.Connect(netConf.IrcServers[currentServer])
-		<-quit
+
+		superloop := true
+		for superloop {
+			select {
+			case <-quit:
+				break
+			case cmdmsg := <-cmdChan:
+				LogDebug("(%s) Got Command: %x", netConf.Name, cmdmsg)
+				switch cmdmsg.Type {
+				case CMT_CONNECT:
+					LogDebug("(%s) connect unimplemented!", netConf.Name)
+				case CMT_DISCONNECT:
+					LogDebug("(%s) disconnecting...")
+					ircCli.Quit("disconnecting...")
+					// waiting for next command
+					for {
+						cmdmsg := <-cmdChan
+						LogDebug("(%s) Got Command while d/ced: %x", netConf.Name, cmdmsg)
+						if cmdmsg.Type == CMT_CONNECT {
+							LogInfo("(%s) Reconnecting...", netConf.Name)
+							superloop = false
+							break
+						} else {
+							LogInfo("(%s) Command dropped!")
+						}
+					}
+				case CMT_START_LOGGING:
+					LogDebug("(%s) joining channel %s", netConf.Name, cmdmsg.Channel)
+					ircCli.Join(cmdmsg.Channel)
+				case CMT_STOP_LOGGING:
+					LogDebug("(%s) parting channel %s", netConf.Name, cmdmsg.Channel)
+					ircCli.Part(cmdmsg.Channel, "told to part")
+				case CMT_TELL:
+					LogDebug("(%s) telling <%s> %s", netConf.Name, cmdmsg.Target, cmdmsg.Message)
+					ircCli.Privmsg(cmdmsg.Target, cmdmsg.Message)
+				}
+			}
+		}
 
 		time.Sleep(1 * time.Second)
 		currentServer = (currentServer + 1) % len(netConf.IrcServers)
+	}
+}
+
+func commandMultiplexer(db Database, netMap map[bson.ObjectId]chan CommandMessage) {
+	LogInfo("Command multiplexer starting - interval %x", MULTIPLEXER_INTERVAL)
+	multiplexerTicker := time.Tick(MULTIPLEXER_INTERVAL)
+	for {
+		LogDebug("CMDMX - running tick")
+
+		LogDebug("CMDMX - fetching commands from database")
+		c, err := db.FetchPendingCommands()
+		if err != nil {
+			LogDebug("CMDMX - got error %x", err)
+		} else {
+			for _, cmd := range c {
+				LogDebug("CMDMX - command: %x", cmd)
+				timeOut := time.After(MULTIPLEXER_TIMEOUT)
+				select {
+				case netMap[cmd.NetworkId] <- cmd:
+					LogDebug("CMDMX - command sent!")
+					LogDebug("CMDMX - setting command as complete:")
+					if err := db.CommandComplete(cmd); err != nil {
+						LogDebug("CMDMX - command error! %x", err)
+						continue
+					}
+					LogDebug("CMDMX - command marked complete.")
+				case <-timeOut:
+					LogDebug("CMDMX - command timeout!")
+				}
+			}
+		}
+
+		<-multiplexerTicker
 	}
 }
 
@@ -160,9 +284,13 @@ func Start() {
 
 	messageChan := make(chan LogMessage, 20)
 
+	netMap := make(map[bson.ObjectId]chan CommandMessage)
+
 	// well, here goes!
 	for _, net := range config.Networks {
-		go ircClientRoutine(net, messageChan)
+		cmdChan := make(chan CommandMessage)
+		go ircClientRoutine(net, messageChan, cmdChan)
+		netMap[net.Id] = cmdChan
 	}
 
 	go func(mChan chan LogMessage, db Database) {
@@ -175,6 +303,8 @@ func Start() {
 			}
 		}
 	}(messageChan, db)
+
+	go commandMultiplexer(db, netMap)
 
 	// spin
 	<-make(chan int)

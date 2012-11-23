@@ -2,6 +2,7 @@ package logger
 
 import (
 	"errors"
+	"fmt"
 	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"
 	"regexp"
@@ -9,6 +10,43 @@ import (
 )
 
 type LogMessageType uint
+type CommandMessageType uint
+
+func (l LogMessageType) String() string {
+	switch l {
+	case LMT_PRIVMSG:
+		return "PRIVMSG"
+	case LMT_NOTICE:
+		return "NOTICE"
+	case LMT_JOIN:
+		return "JOIN"
+	case LMT_PART:
+		return "PART"
+	case LMT_TOPIC:
+		return "TOPIC"
+	case LMT_KICK:
+		return "KICK"
+	case LMT_QUIT:
+		return "QUIT"
+	}
+	return fmt.Sprintf("[unknown %d]", l)
+}
+
+func (c CommandMessageType) String() string {
+	switch c {
+	case CMT_START_LOGGING:
+		return "START_LOGGING %s/%s"
+	case CMT_STOP_LOGGING:
+		return "STOP_LOGGING"
+	case CMT_DISCONNECT:
+		return "DISCONNECT"
+	case CMT_CONNECT:
+		return "CONNECT"
+	case CMT_TELL:
+		return "TELL"
+	}
+	return fmt.Sprintf("[unknown %d]", c)
+}
 
 const (
 	LMT_PRIVMSG = iota
@@ -16,6 +54,16 @@ const (
 	LMT_JOIN
 	LMT_PART
 	LMT_TOPIC
+	LMT_KICK
+	LMT_QUIT
+)
+
+const (
+	CMT_START_LOGGING = iota
+	CMT_STOP_LOGGING
+	CMT_DISCONNECT
+	CMT_CONNECT
+	CMT_TELL
 )
 
 type LogMessage struct {
@@ -30,7 +78,19 @@ type LogMessage struct {
 
 	Type LogMessageType
 
+	Target  interface{}
 	Payload interface{}
+}
+
+type CommandMessage struct {
+	Id bson.ObjectId `bson:"_id,omitempty"`
+
+	NetworkId bson.ObjectId
+	Type      CommandMessageType
+	Channel   string
+	Target    string
+	Message   string
+	Complete  bool
 }
 
 type ChannelConfig struct {
@@ -59,6 +119,8 @@ type Config struct {
 type Database interface {
 	Connect(connString string) error
 	GetConfig() (Config, error)
+	FetchPendingCommands() ([]CommandMessage, error)
+	CommandComplete(CommandMessage) error
 
 	LogMessage(message LogMessage) error
 }
@@ -69,6 +131,7 @@ var errUrlBadFormat = errors.New(`url must be in format databaseprovider://datab
 func DbConnect(dbConnString string) (Database, error) {
 	LogDebug("told to connect to database with str %s", dbConnString)
 	submatches := correctConnStringRegexp.FindStringSubmatch(dbConnString)
+
 	if submatches == nil {
 		return nil, errUrlBadFormat
 	}
@@ -168,6 +231,35 @@ func (m *MongoDatabase) LogMessage(message LogMessage) error {
 	return nil
 }
 
+func (m *MongoDatabase) FetchPendingCommands() ([]CommandMessage, error) {
+	if err := m.validateSelf(); err != nil {
+		return nil, err
+	}
+
+	LogDebug("mongodb: fetching pending commands")
+	q := m.connection.DB("").C("command_queue").Find(bson.M{"complete": false})
+
+	commandMessageArray := make([]CommandMessage, 0)
+	if err := q.Iter().All(&commandMessageArray); err != nil {
+		return nil, err
+	}
+
+	return commandMessageArray, nil
+}
+
+func (m *MongoDatabase) CommandComplete(cmdMsg CommandMessage) error {
+	if err := m.validateSelf(); err != nil {
+		return err
+	}
+
+	LogDebug("mongodb: marking command as complete: %x", cmdMsg)
+	if err := m.connection.DB("").C("command_queue").Update(bson.M{"_id": cmdMsg.Id}, bson.M{"$set": bson.M{"complete": true}}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 type MockDatabase struct {
 }
 
@@ -182,5 +274,13 @@ func (m *MockDatabase) GetConfig() (Config, error) {
 }
 
 func (m *MockDatabase) LogMessage(message LogMessage) error {
+	return nil
+}
+
+func (m *MockDatabase) FetchPendingCommands() ([]CommandMessage, error) {
+	return make([]CommandMessage, 0), nil
+}
+
+func (m *MockDatabase) CommandComplete(cmdMsg CommandMessage) error {
 	return nil
 }
