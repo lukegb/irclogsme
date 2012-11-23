@@ -136,7 +136,6 @@ func ircClientRoutine(netConf NetworkConfig, messageChan chan LogMessage) {
 }
 
 func Start() {
-	irc.SimpleClient("t")
 	LogInfo("Starting up irclogs.me logger v%s (version identifier: %d)", VERSION_STRING, VERSION_ID)
 	flag.Parse()
 
