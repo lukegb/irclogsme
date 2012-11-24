@@ -64,6 +64,8 @@ func (c CommandMessageType) String() string {
 }
 
 type LogMessage struct {
+	Id bson.ObjectId `bson:"_id,omitempty"`
+
 	NetworkId bson.ObjectId
 	Channel   string
 
