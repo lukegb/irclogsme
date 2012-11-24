@@ -115,7 +115,7 @@ func (m *MongoDatabase) LogMessage(message irclogsme.LogMessage) error {
 		return err
 	}
 
-	message.SplitDate = message.Time.Format("2006-02-01")
+	message.SplitDate = message.Time.Format("2006-01-02")
 
 	LogDebug("mongodb: logging message - %s", message)
 	if err := m.connection.DB("").C("logs").Insert(message); err != nil {
