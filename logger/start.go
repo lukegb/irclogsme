@@ -39,6 +39,8 @@ func ircClientRoutine(netConf irclogsme.NetworkConfig, messageChan chan irclogsm
 		quit <- true
 	})
 
+	var actualChannels []string
+
 	ircCli.AddHandler("connected", func(conn *irc.Conn, line *irc.Line) {
 		LogInfo("(%s) Connected!")
 		LogInfo("(%s) Executing connection commands.")
@@ -47,9 +49,11 @@ func ircClientRoutine(netConf irclogsme.NetworkConfig, messageChan chan irclogsm
 			conn.Raw(cmd)
 		}
 		LogInfo("(%s) Joining channels.", netConf.Name)
+		actualChannels := make([]string, 0)
 		for channelName, _ := range netConf.Channels {
 			LogDebug("(%s) - joining %s", netConf.Name, channelName)
 			conn.Join(channelName)
+			actualChannels = append(actualChannels, channelName)
 			time.Sleep(1 * time.Second)
 		}
 	})
@@ -166,15 +170,24 @@ func ircClientRoutine(netConf irclogsme.NetworkConfig, messageChan chan irclogsm
 		}
 		LogDebug("(%s) [%s] <%s> quit: %s", netConf.Name, line.Time.String(), line.Src, message)
 		theirNick := conn.ST.GetNick(line.Nick)
+		outChannels := make([]string, 0)
+		for _, channel := range actualChannels {
+			if _, ok := theirNick.IsOnStr(channel); ok {
+				outChannels = append(outChannels, channel)
+			}
+		}
 		// make a log message!
-		messageChan <- irclogsme.LogMessage{
-			Type:      irclogsme.LMT_QUIT,
-			NetworkId: netConf.Id,
-			Payload:   message,
-			Time:      line.Time,
-			Nick:      line.Nick,
-			Ident:     line.Ident,
-			Host:      line.Host,
+		for _, outChannel := range outChannels {
+			messageChan <- irclogsme.LogMessage{
+				Type:      irclogsme.LMT_QUIT,
+				NetworkId: netConf.Id,
+				Payload:   message,
+				Channel:   outChannel,
+				Time:      line.Time,
+				Nick:      line.Nick,
+				Ident:     line.Ident,
+				Host:      line.Host,
+			}
 		}
 	})
 
@@ -231,9 +244,19 @@ func ircClientRoutine(netConf irclogsme.NetworkConfig, messageChan chan irclogsm
 				case irclogsme.CMT_START_LOGGING:
 					LogDebug("(%s) joining channel %s", netConf.Name, cmdmsg.Channel)
 					ircCli.Join(cmdmsg.Channel)
+					actualChannels = append(actualChannels, cmdmsg.Channel)
 				case irclogsme.CMT_STOP_LOGGING:
 					LogDebug("(%s) parting channel %s", netConf.Name, cmdmsg.Channel)
 					ircCli.Part(cmdmsg.Channel, "told to part")
+					nuker := -1
+					for k, v := range actualChannels {
+						if v == cmdmsg.Channel {
+							nuker = k
+						}
+					}
+					if nuker != -1 {
+						actualChannels = append(actualChannels[:nuker], actualChannels[nuker+1:])
+					}
 				case irclogsme.CMT_TELL:
 					LogDebug("(%s) telling <%s> %s", netConf.Name, cmdmsg.Target, cmdmsg.Message)
 					ircCli.Privmsg(cmdmsg.Target, cmdmsg.Message)
