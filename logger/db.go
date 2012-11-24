@@ -70,7 +70,8 @@ type LogMessage struct {
 	NetworkId bson.ObjectId
 	Channel   string
 
-	Time time.Time
+	Time      time.Time
+	SplitDate string
 
 	Nick  string
 	Ident string
@@ -222,6 +223,8 @@ func (m *MongoDatabase) LogMessage(message LogMessage) error {
 	if err := m.validateSelf(); err != nil {
 		return err
 	}
+
+	message.SplitDate = message.Time.Format("2006-02-01")
 
 	LogDebug("mongodb: logging message - %s", message)
 	if err := m.connection.DB("").C("logs").Insert(message); err != nil {
