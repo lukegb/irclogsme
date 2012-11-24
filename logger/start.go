@@ -165,10 +165,29 @@ func ircClientRoutine(netConf irclogsme.NetworkConfig, messageChan chan irclogsm
 			message = line.Args[0]
 		}
 		LogDebug("(%s) [%s] <%s> quit: %s", netConf.Name, line.Time.String(), line.Src, message)
+		theirNick := conn.ST.GetNick(line.Nick)
 		// make a log message!
 		messageChan <- irclogsme.LogMessage{
 			Type:      irclogsme.LMT_QUIT,
 			NetworkId: netConf.Id,
+			Payload:   message,
+			Time:      line.Time,
+			Nick:      line.Nick,
+			Ident:     line.Ident,
+			Host:      line.Host,
+		}
+	})
+
+	ircCli.AddHandler("ACTION", func(conn *irc.Conn, line *irc.Line) {
+		var message string
+		if len(line.Args) > 1 {
+			message = line.Args[1]
+		}
+		LogDebug("(%s) [%s] * %s %s", netConf.Name, line.Time.String(), line.Src, message)
+		messageChan <- irclogsme.LogMessage{
+			Type:      irclogsme.LMT_ACTION,
+			NetworkId: netConf.Id,
+			Channel:   line.Args[0],
 			Payload:   message,
 			Time:      line.Time,
 			Nick:      line.Nick,

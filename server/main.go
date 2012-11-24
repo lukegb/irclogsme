@@ -145,6 +145,9 @@ func logMorph(log irclogsme.LogMessage) Log {
 	case irclogsme.LMT_QUIT:
 		res.Type = "quit"
 		res.Data = log.Payload
+	case irclogsme.LMT_ACTION:
+		res.Type = "action"
+		res.Data = log.Payload
 	case irclogsme.LMT_KICK:
 		res.Type = "kick"
 		lk := LogKick{Target: log.Target.(string)}

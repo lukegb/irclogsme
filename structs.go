@@ -14,6 +14,7 @@ const (
 	LMT_TOPIC
 	LMT_KICK
 	LMT_QUIT
+	LMT_ACTION
 )
 
 const (
@@ -43,6 +44,8 @@ func (l LogMessageType) String() string {
 		return "KICK"
 	case LMT_QUIT:
 		return "QUIT"
+	case LMT_ACTION:
+		return "ACTION"
 	}
 	return fmt.Sprintf("[unknown %d]", l)
 }
