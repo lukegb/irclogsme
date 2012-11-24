@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type ErrorStruct struct {
@@ -146,6 +147,17 @@ func logMorph(log irclogsme.LogMessage) Log {
 			lk.Message = message
 		}
 		res.Data = lk
+	}
+	if sdata, ok := res.Data.(string); ok {
+		if !utf8.ValidString(sdata) {
+			res.Data = "[invalid unicode]"
+		}
+	} else if sdata, ok := res.Data.(LogKick); ok {
+		if !utf8.ValidString(sdata.Message) {
+			lk := res.Data.(LogKick)
+			lk.Message = "[invalid unicode]"
+			res.Data = lk
+		}
 	}
 	return res
 }
