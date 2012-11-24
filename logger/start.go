@@ -255,7 +255,7 @@ func ircClientRoutine(netConf irclogsme.NetworkConfig, messageChan chan irclogsm
 						}
 					}
 					if nuker != -1 {
-						actualChannels = append(actualChannels[:nuker], actualChannels[nuker+1:])
+						actualChannels = append(actualChannels[:nuker], actualChannels[nuker+1:]...)
 					}
 				case irclogsme.CMT_TELL:
 					LogDebug("(%s) telling <%s> %s", netConf.Name, cmdmsg.Target, cmdmsg.Message)
