@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bufio"
+	"code.google.com/p/go.net/websocket"
 	"encoding/json"
 	"errors"
 	"github.com/lukegb/irclogsme"
@@ -37,6 +39,8 @@ type LogKick struct {
 }
 
 type Log struct {
+	Id string `json:"id"`
+
 	Time time.Time `json:"time"`
 
 	Nick  string `json:"nick"`
@@ -116,6 +120,7 @@ func channelOk(channelName string, network irclogsme.NetworkConfig) bool {
 
 func logMorph(log irclogsme.LogMessage) Log {
 	res := Log{
+		Id:    log.Id.String(),
 		Time:  log.Time,
 		Nick:  log.Nick,
 		Ident: log.Ident,
@@ -162,6 +167,50 @@ func logMorph(log irclogsme.LogMessage) Log {
 	return res
 }
 
+func wsHandler(ws *websocket.Conn, networkId bson.ObjectId, channelName string, coll *mgo.Collection) {
+	// get the last object id
+	bufReader := bufio.NewReader(ws)
+	objectId, err := bufReader.ReadString('\n')
+	objectId = objectId[:len(objectId)-1]
+	if err != nil {
+		panic(err)
+	}
+	objectIdH := bson.ObjectIdHex(objectId)
+
+	var lastLog irclogsme.LogMessage
+	err = coll.Find(bson.M{"_id": objectIdH}).One(&lastLog)
+	if err != nil {
+		panic(err)
+	}
+	ws.Write([]byte("RUNNING\n"))
+
+	// check any newer
+	var logs []irclogsme.LogMessage
+	timer := time.Tick(1 * time.Second)
+	for {
+		<-timer
+		q := coll.Find(bson.M{"networkid": networkId, "channel": channelName, "time": bson.M{"$gt": lastLog.Time}}).Sort("time")
+		err := q.All(&logs)
+		if err != nil {
+			panic(err)
+		}
+
+		for _, loga := range logs {
+			log.Println(loga)
+			logFormat := logMorph(loga)
+			form, err := json.Marshal(logFormat)
+			if err != nil {
+				panic(err)
+			}
+			ws.Write([]byte(string(form) + "\n"))
+
+			if loga.Time.After(lastLog.Time) {
+				lastLog = loga
+			}
+		}
+	}
+}
+
 func Start() {
 	dbc, err := mgo.Dial("mongodb://localhost/irclogsme")
 	if err != nil {
@@ -178,7 +227,33 @@ func Start() {
 		}
 		choppedBits := strings.Split(chopped, "/")
 		slashCount := strings.Count(chopped, "/")
-		if slashCount == 3 { // date, server and channel - return logs!
+		if slashCount == 3 && choppedBits[2] == "ws" { // websoketz
+			serverName := choppedBits[0]
+			channelName := "#" + choppedBits[1]
+			// fetch the network
+			network, err := networkOk(serverName, db)
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+			}
+
+			// check if the channel's in the list
+			if !channelOk(channelName, network) {
+				http.Error(w, "not found", 404)
+			}
+
+			// return logs
+			coll := db.C("logs")
+			q := coll.Find(bson.M{"networkid": network.Id, "channel": channelName}).Sort("time")
+			count, err := q.Count()
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+			} else if count == 0 {
+				http.Error(w, "not found", 404)
+			}
+
+			// OK, let's go
+			websocket.Handler(func(ws *websocket.Conn) { wsHandler(ws, network.Id, channelName, coll) }).ServeHTTP(w, r)
+		} else if slashCount == 3 { // date, server and channel - return logs!
 			jsonResponsinator(func(r *http.Request) (interface{}, int) {
 				serverName := choppedBits[0]
 				channelName := "#" + choppedBits[1]
