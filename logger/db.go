@@ -2,128 +2,19 @@ package logger
 
 import (
 	"errors"
-	"fmt"
+	"github.com/lukegb/irclogsme"
 	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"
 	"regexp"
-	"time"
 )
-
-type LogMessageType uint
-type CommandMessageType uint
-
-func (l LogMessageType) String() string {
-	switch l {
-	case LMT_PRIVMSG:
-		return "PRIVMSG"
-	case LMT_NOTICE:
-		return "NOTICE"
-	case LMT_JOIN:
-		return "JOIN"
-	case LMT_PART:
-		return "PART"
-	case LMT_TOPIC:
-		return "TOPIC"
-	case LMT_KICK:
-		return "KICK"
-	case LMT_QUIT:
-		return "QUIT"
-	}
-	return fmt.Sprintf("[unknown %d]", l)
-}
-
-func (c CommandMessageType) String() string {
-	switch c {
-	case CMT_START_LOGGING:
-		return "START_LOGGING %s/%s"
-	case CMT_STOP_LOGGING:
-		return "STOP_LOGGING"
-	case CMT_DISCONNECT:
-		return "DISCONNECT"
-	case CMT_CONNECT:
-		return "CONNECT"
-	case CMT_TELL:
-		return "TELL"
-	}
-	return fmt.Sprintf("[unknown %d]", c)
-}
-
-const (
-	LMT_PRIVMSG = iota
-	LMT_NOTICE
-	LMT_JOIN
-	LMT_PART
-	LMT_TOPIC
-	LMT_KICK
-	LMT_QUIT
-)
-
-const (
-	CMT_START_LOGGING = iota
-	CMT_STOP_LOGGING
-	CMT_DISCONNECT
-	CMT_CONNECT
-	CMT_TELL
-)
-
-type LogMessage struct {
-	NetworkId bson.ObjectId
-	Channel   string
-
-	Time      time.Time
-	SplitDate string
-
-	Nick  string
-	Ident string
-	Host  string
-
-	Type LogMessageType
-
-	Target  interface{}
-	Payload interface{}
-}
-
-type CommandMessage struct {
-	Id bson.ObjectId `bson:"_id,omitempty"`
-
-	NetworkId bson.ObjectId
-	Type      CommandMessageType
-	Channel   string
-	Target    string
-	Message   string
-	Complete  bool
-}
-
-type ChannelConfig struct {
-}
-
-type NetworkConfig struct {
-	Id bson.ObjectId `bson:"_id,omitempty"`
-
-	Name string
-
-	Channels map[string]ChannelConfig
-
-	Nick    string
-	Enabled bool
-	User    string
-
-	IrcServers []string
-
-	AuthCommands []string
-}
-
-type Config struct {
-	Networks []NetworkConfig
-}
 
 type Database interface {
 	Connect(connString string) error
-	GetConfig() (Config, error)
-	FetchPendingCommands() ([]CommandMessage, error)
-	CommandComplete(CommandMessage) error
+	GetConfig() (irclogsme.Config, error)
+	FetchPendingCommands() ([]irclogsme.CommandMessage, error)
+	CommandComplete(irclogsme.CommandMessage) error
 
-	LogMessage(message LogMessage) error
+	LogMessage(message irclogsme.LogMessage) error
 }
 
 var correctConnStringRegexp = regexp.MustCompile(`^([a-z]+)://.*`)
@@ -177,15 +68,15 @@ func (m *MongoDatabase) validateSelf() error {
 	return nil
 }
 
-func (m *MongoDatabase) GetConfig() (Config, error) {
-	var c Config
+func (m *MongoDatabase) GetConfig() (irclogsme.Config, error) {
+	var c irclogsme.Config
 
 	if err := m.validateSelf(); err != nil {
 		return c, err
 	}
 
 	LogDebug("mongodb: fetching config")
-	c = Config{}
+	c = irclogsme.Config{}
 	q := m.connection.DB("").C("config").Find(struct{}{})
 	if count, err := q.Count(); count != 1 || err != nil {
 		if err != nil {
@@ -219,7 +110,7 @@ func (m *MongoDatabase) GetConfig() (Config, error) {
 	return c, nil
 }
 
-func (m *MongoDatabase) LogMessage(message LogMessage) error {
+func (m *MongoDatabase) LogMessage(message irclogsme.LogMessage) error {
 	if err := m.validateSelf(); err != nil {
 		return err
 	}
@@ -234,7 +125,7 @@ func (m *MongoDatabase) LogMessage(message LogMessage) error {
 	return nil
 }
 
-func (m *MongoDatabase) FetchPendingCommands() ([]CommandMessage, error) {
+func (m *MongoDatabase) FetchPendingCommands() ([]irclogsme.CommandMessage, error) {
 	if err := m.validateSelf(); err != nil {
 		return nil, err
 	}
@@ -242,7 +133,7 @@ func (m *MongoDatabase) FetchPendingCommands() ([]CommandMessage, error) {
 	LogDebug("mongodb: fetching pending commands")
 	q := m.connection.DB("").C("command_queue").Find(bson.M{"complete": false})
 
-	commandMessageArray := make([]CommandMessage, 0)
+	commandMessageArray := make([]irclogsme.CommandMessage, 0)
 	if err := q.Iter().All(&commandMessageArray); err != nil {
 		return nil, err
 	}
@@ -250,7 +141,7 @@ func (m *MongoDatabase) FetchPendingCommands() ([]CommandMessage, error) {
 	return commandMessageArray, nil
 }
 
-func (m *MongoDatabase) CommandComplete(cmdMsg CommandMessage) error {
+func (m *MongoDatabase) CommandComplete(cmdMsg irclogsme.CommandMessage) error {
 	if err := m.validateSelf(); err != nil {
 		return err
 	}
@@ -271,19 +162,19 @@ func (m *MockDatabase) Connect(connString string) error {
 	return nil
 }
 
-func (m *MockDatabase) GetConfig() (Config, error) {
+func (m *MockDatabase) GetConfig() (irclogsme.Config, error) {
 	LogDebug("mockdb: fetching config")
-	return Config{}, nil
+	return irclogsme.Config{}, nil
 }
 
-func (m *MockDatabase) LogMessage(message LogMessage) error {
+func (m *MockDatabase) LogMessage(message irclogsme.LogMessage) error {
 	return nil
 }
 
-func (m *MockDatabase) FetchPendingCommands() ([]CommandMessage, error) {
-	return make([]CommandMessage, 0), nil
+func (m *MockDatabase) FetchPendingCommands() ([]irclogsme.CommandMessage, error) {
+	return make([]irclogsme.CommandMessage, 0), nil
 }
 
-func (m *MockDatabase) CommandComplete(cmdMsg CommandMessage) error {
+func (m *MockDatabase) CommandComplete(cmdMsg irclogsme.CommandMessage) error {
 	return nil
 }
