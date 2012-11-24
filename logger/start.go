@@ -33,6 +33,7 @@ func readStringFromFile(filename string) (string, error) {
 func ircClientRoutine(netConf irclogsme.NetworkConfig, messageChan chan irclogsme.LogMessage, cmdChan chan irclogsme.CommandMessage) {
 	// this is a go routine
 	ircCli := irc.SimpleClient(netConf.Nick, netConf.User, "http://irclogs.me")
+	ircCli.EnableStateTracking()
 	quit := make(chan bool)
 	ircCli.AddHandler("disconnected", func(conn *irc.Conn, line *irc.Line) {
 		LogInfo("(%s) Disconnected?!?", netConf.Name)
