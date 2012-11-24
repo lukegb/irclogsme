@@ -37,7 +37,7 @@ func main() {
 
 		doneC += 1
 		if doneC%10 == 0 {
-			log.Println("%d / %d - %d%%", doneC, count, (doneC*100)/count)
+			log.Printf("%d / %d - %d%%", doneC, count, (doneC*100)/count)
 		}
 	}
 	if i.Err() != nil {
