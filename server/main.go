@@ -62,6 +62,7 @@ func jsonResponsinator(z func(r *http.Request) (interface{}, int)) func(http.Res
 		heads := w.Header()
 		heads.Add("Access-Control-Allow-Origin", "*")
 		if r.Method == "OPTIONS" {
+			heads.Add("Access-Control-Allow-Headers", "origin, x-requested-with, accept")
 			w.WriteHeader(200)
 			w.Write([]byte("ok"))
 			return
