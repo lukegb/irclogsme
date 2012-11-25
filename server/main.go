@@ -59,6 +59,13 @@ type Logs struct {
 
 func jsonResponsinator(z func(r *http.Request) (interface{}, int)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		heads := w.Header()
+		heads.Add("Access-Control-Allow-Origin", "*")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(200)
+			w.Write([]byte("ok"))
+			return
+		}
 		resp, status := z(r)
 		if erre, ok := resp.(error); ok {
 			if erre.Error() == "not found" {
