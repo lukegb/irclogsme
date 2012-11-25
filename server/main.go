@@ -24,8 +24,9 @@ type Channel struct {
 }
 
 type Network struct {
-	Name     string    `json:"name"`
-	Channels []Channel `json:"channels"`
+	Name         string    `json:"name"`
+	FriendlyName string    `json:"friendly_name"`
+	Channels     []Channel `json:"channels"`
 }
 
 type FullChannel struct {
@@ -88,6 +89,7 @@ func jsonResponsinator(z func(r *http.Request) (interface{}, int)) func(http.Res
 func networkMorph(nc irclogsme.NetworkConfig) Network {
 	res := Network{}
 	res.Name = nc.Name
+	res.FriendlyName = nc.FriendlyName
 	res.Channels = make([]Channel, 0, len(nc.Channels))
 	for channel_name, _ := range nc.Channels {
 		res.Channels = append(res.Channels, Channel{Name: channel_name})

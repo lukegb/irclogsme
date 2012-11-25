@@ -102,7 +102,8 @@ type ChannelConfig struct {
 type NetworkConfig struct {
 	Id bson.ObjectId `bson:"_id,omitempty"`
 
-	Name string
+	Name         string
+	FriendlyName string
 
 	Channels map[string]ChannelConfig
 
